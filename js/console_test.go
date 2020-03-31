@@ -130,7 +130,7 @@ func TestConsole(t *testing.T) {
 
 					logger, hook := logtest.NewNullLogger()
 					logger.Level = logrus.DebugLevel
-					jsVU := vu.(*VU)
+					jsVU := vu.(*ActiveVU)
 					jsVU.Console.Logger = logger
 
 					err = vu.RunOnce()
@@ -222,7 +222,7 @@ func TestFileConsole(t *testing.T) {
 							assert.NoError(t, err)
 
 							vu := initVU.Activate(&lib.VUActivationParams{RunContext: context.Background()})
-							jsVU := vu.(*VU)
+							jsVU := vu.(*ActiveVU)
 							jsVU.Console.Logger.Level = logrus.DebugLevel
 							hook := logtest.NewLocal(jsVU.Console.Logger)
 
