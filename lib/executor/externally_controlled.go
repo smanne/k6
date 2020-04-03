@@ -384,7 +384,7 @@ type externallyControlledRunState struct {
 // from the global VU buffer. These are the VUs that the user originally
 // specified in the JS config, and that the ExecutionScheduler pre-initialized
 // for us.
-func (rs *externallyControlledRunState) retrieveStartMaxVUs() error {
+func (rs *externallyControlledRunState) retrieveStartMaxVUs(vusDone chan struct{}) error {
 	for i := int64(0); i < rs.startMaxVUs; i++ { // get the initial planned VUs from the common buffer
 		initVU, vuGetErr := rs.executor.executionState.GetPlannedVU(rs.executor.logger, false)
 		if vuGetErr != nil {
@@ -393,7 +393,7 @@ func (rs *externallyControlledRunState) retrieveStartMaxVUs() error {
 		vuHandle := newManualVUHandle(
 			rs.ctx, rs.executor.executionState, rs.activeVUsCount, initVU, rs.executor.logger.WithField("vuNum", i),
 		)
-		go vuHandle.runLoopsIfPossible(rs.runIteration)
+		go vuHandle.runLoopsIfPossible(rs.runIteration, vusDone)
 		rs.vuHandles[i] = vuHandle
 	}
 	return nil
@@ -425,7 +425,9 @@ func (rs *externallyControlledRunState) progresFn() (float64, []string) {
 	return progress, right
 }
 
-func (rs *externallyControlledRunState) handleConfigChange(oldCfg, newCfg ExternallyControlledConfigParams) error {
+func (rs *externallyControlledRunState) handleConfigChange(
+	oldCfg, newCfg ExternallyControlledConfigParams, vusDone chan struct{},
+) error {
 	executionState := rs.executor.executionState
 	segment := executionState.Options.ExecutionSegment
 	oldActiveVUs := segment.Scale(oldCfg.VUs.Int64)
@@ -451,7 +453,7 @@ func (rs *externallyControlledRunState) handleConfigChange(oldCfg, newCfg Extern
 		vuHandle := newManualVUHandle(
 			rs.ctx, executionState, rs.activeVUsCount, initVU, rs.executor.logger.WithField("vuNum", i),
 		)
-		go vuHandle.runLoopsIfPossible(rs.runIteration)
+		go vuHandle.runLoopsIfPossible(rs.runIteration, vusDone)
 		rs.vuHandles = append(rs.vuHandles, vuHandle)
 	}
 
@@ -512,6 +514,7 @@ func (mex *ExternallyControlled) Run(parentCtx context.Context, out chan<- stats
 	).Debug("Starting executor run...")
 
 	startMaxVUs := mex.executionState.Options.ExecutionSegment.Scale(mex.config.MaxVUs.Int64)
+	activeVUsCount := new(int64)
 	runState := &externallyControlledRunState{
 		ctx:             ctx,
 		executor:        mex,
@@ -519,12 +522,19 @@ func (mex *ExternallyControlled) Run(parentCtx context.Context, out chan<- stats
 		duration:        duration,
 		vuHandles:       make([]*manualVUHandle, startMaxVUs),
 		currentlyPaused: false,
-		activeVUsCount:  new(int64),
+		activeVUsCount:  activeVUsCount,
 		maxVUs:          new(int64),
 		runIteration:    getIterationRunner(mex.executionState, mex.logger),
 	}
 	*runState.maxVUs = startMaxVUs
-	if err = runState.retrieveStartMaxVUs(); err != nil {
+	vusDone := make(chan struct{})
+	// Wait for all VUs to finish
+	defer func() {
+		for i := int64(0); i < atomic.LoadInt64(activeVUsCount); i++ {
+			<-vusDone
+		}
+	}()
+	if err = runState.retrieveStartMaxVUs(vusDone); err != nil {
 		return err
 	}
 
@@ -532,13 +542,13 @@ func (mex *ExternallyControlled) Run(parentCtx context.Context, out chan<- stats
 	go trackProgress(parentCtx, ctx, ctx, mex, runState.progresFn)
 
 	err = runState.handleConfigChange( // Start by setting MaxVUs to the starting MaxVUs
-		ExternallyControlledConfigParams{MaxVUs: mex.config.MaxVUs}, currentControlConfig,
+		ExternallyControlledConfigParams{MaxVUs: mex.config.MaxVUs}, currentControlConfig, vusDone,
 	)
 	if err != nil {
 		return err
 	}
 	defer func() { // Make sure we release the VUs at the end
-		err = runState.handleConfigChange(currentControlConfig, ExternallyControlledConfigParams{})
+		err = runState.handleConfigChange(currentControlConfig, ExternallyControlledConfigParams{}, vusDone)
 	}()
 
 	for {
@@ -546,7 +556,7 @@ func (mex *ExternallyControlled) Run(parentCtx context.Context, out chan<- stats
 		case <-ctx.Done():
 			return nil
 		case updateConfigEvent := <-mex.newControlConfigs:
-			err := runState.handleConfigChange(currentControlConfig, updateConfigEvent.newConfig)
+			err := runState.handleConfigChange(currentControlConfig, updateConfigEvent.newConfig, vusDone)
 			if err != nil {
 				updateConfigEvent.err <- err
 				if ctx.Err() == err {

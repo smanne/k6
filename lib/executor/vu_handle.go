@@ -102,7 +102,7 @@ func (vh *vuHandle) hardStop() {
 
 //TODO: simplify this somehow - I feel like there should be a better way to
 //implement this logic... maybe with sync.Cond?
-func (vh *vuHandle) runLoopsIfPossible(runIter func(context.Context, lib.ActiveVU)) {
+func (vh *vuHandle) runLoopsIfPossible(runIter func(context.Context, lib.ActiveVU), vusDone chan struct{}) {
 	executorDone := vh.parentCtx.Done()
 
 	var vu lib.ActiveVU
@@ -160,6 +160,7 @@ mainLoop:
 			vu = initVU.Activate(&lib.VUActivationParams{
 				RunContext:         ctx,
 				DeactivateCallback: deactivateVU,
+				Done:               vusDone,
 			})
 		}
 

@@ -388,6 +388,11 @@ func (u *VU) Activate(params *lib.VUActivationParams) lib.ActiveVU {
 	// u.Env = params.Env
 
 	go func() {
+		if params.Done != nil {
+			defer func() {
+				params.Done <- struct{}{}
+			}()
+		}
 		<-params.RunContext.Done()
 		u.Runtime.Interrupt(errInterrupt)
 		if params.DeactivateCallback != nil {

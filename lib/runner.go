@@ -47,6 +47,10 @@ type InitializedVU interface {
 type VUActivationParams struct {
 	RunContext         context.Context
 	DeactivateCallback func()
+	// Used to signal when the VU has finished execution, after RunContext
+	// is done, the Goja VM is interrupted and the callback is called.
+	// It shouldn't be closed.
+	Done chan struct{}
 	// Env                map[string]string
 	// Tags               map[string]string
 	// Exec               null.String

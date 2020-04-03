@@ -196,6 +196,14 @@ func (pvi PerVUIterations) Run(ctx context.Context, out chan<- stats.SampleConta
 	regDurationDone := regDurationCtx.Done()
 	runIteration := getIterationRunner(pvi.executionState, pvi.logger)
 
+	vusDone := make(chan struct{})
+	activeVUsCount := new(uint64)
+	// Wait for all VUs to finish
+	defer func() {
+		for i := uint64(0); i < atomic.LoadUint64(activeVUsCount); i++ {
+			<-vusDone
+		}
+	}()
 	handleVU := func(initVU lib.InitializedVU) {
 		defer activeVUs.Done()
 
@@ -207,7 +215,9 @@ func (pvi PerVUIterations) Run(ctx context.Context, out chan<- stats.SampleConta
 			DeactivateCallback: func() {
 				pvi.executionState.ReturnVU(initVU, true)
 			},
+			Done: vusDone,
 		})
+		atomic.AddUint64(activeVUsCount, 1)
 
 		for i := int64(0); i < iterations; i++ {
 			select {

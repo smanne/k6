@@ -333,22 +333,25 @@ func (varr VariableArrivalRate) Run(ctx context.Context, out chan<- stats.Sample
 
 	// Pre-allocate the VUs local shared buffer
 	activeVUs := make(chan lib.ActiveVU, maxVUs)
-
-	activeVUsCount := uint64(0)
+	vusDone := make(chan struct{})
+	activeVUsCount := new(uint64)
 	// Make sure we put back planned and unplanned VUs back in the global
 	// buffer, and as an extra incentive, this replaces a waitgroup.
 	defer func() {
-		// no need for atomics, since initialisedVUs is mutated only in the select{}
-		for i := uint64(0); i < activeVUsCount; i++ {
+		for i := uint64(0); i < atomic.LoadUint64(activeVUsCount); i++ {
 			vu := <-activeVUs
 			varr.executionState.ReturnVU(vu.(lib.InitializedVU), true)
+			<-vusDone
 		}
 	}()
 
 	activateVU := func(initVU lib.InitializedVU) lib.ActiveVU {
-		activeVU := initVU.Activate(&lib.VUActivationParams{RunContext: maxDurationCtx})
+		activeVU := initVU.Activate(&lib.VUActivationParams{
+			RunContext: maxDurationCtx,
+			Done:       vusDone,
+		})
 		varr.executionState.ModCurrentlyActiveVUsCount(+1)
-		activeVUsCount++
+		atomic.AddUint64(activeVUsCount, 1)
 		return activeVU
 	}
 
@@ -368,7 +371,7 @@ func (varr VariableArrivalRate) Run(ctx context.Context, out chan<- stats.Sample
 	itersFmt := pb.GetFixedLengthFloatFormat(maxArrivalRatePerSec, 0) + " iters/s"
 
 	progresFn := func() (float64, []string) {
-		currActiveVUs := atomic.LoadUint64(&activeVUsCount)
+		currActiveVUs := atomic.LoadUint64(activeVUsCount)
 		currentTickerPeriod := atomic.LoadInt64(tickerPeriod)
 		vusInBuffer := uint64(len(activeVUs))
 		progVUs := fmt.Sprintf(vusFmt+"/"+vusFmt+" VUs",

@@ -542,10 +542,18 @@ func (vlv VariableLoopingVUs) Run(ctx context.Context, out chan<- stats.SampleCo
 		vlv.executionState.ReturnVU(initVU, false)
 	}
 
+	vusDone := make(chan struct{})
+	// Wait for all VUs to finish
+	defer func() {
+		for i := int64(0); i < atomic.LoadInt64(activeVUsCount); i++ {
+			<-vusDone
+		}
+	}()
+
 	vuHandles := make([]*vuHandle, maxVUs)
 	for i := uint64(0); i < maxVUs; i++ {
 		vuHandle := newStoppedVUHandle(maxDurationCtx, getVU, returnVU, vlv.logger.WithField("vuNum", i))
-		go vuHandle.runLoopsIfPossible(runIteration)
+		go vuHandle.runLoopsIfPossible(runIteration, vusDone)
 		vuHandles[i] = vuHandle
 	}
 

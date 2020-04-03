@@ -195,6 +195,15 @@ func (si SharedIterations) Run(ctx context.Context, out chan<- stats.SampleConta
 	regDurationDone := regDurationCtx.Done()
 	runIteration := getIterationRunner(si.executionState, si.logger)
 
+	vusDone := make(chan struct{})
+	activeVUsCount := new(uint64)
+	// Wait for all VUs to finish
+	defer func() {
+		for i := uint64(0); i < atomic.LoadUint64(activeVUsCount); i++ {
+			<-vusDone
+		}
+	}()
+
 	attemptedIters := new(uint64)
 	handleVU := func(initVU lib.InitializedVU) {
 		defer activeVUs.Done()
@@ -207,7 +216,9 @@ func (si SharedIterations) Run(ctx context.Context, out chan<- stats.SampleConta
 			DeactivateCallback: func() {
 				si.executionState.ReturnVU(initVU, true)
 			},
+			Done: vusDone,
 		})
+		atomic.AddUint64(activeVUsCount, 1)
 
 		for {
 			select {
