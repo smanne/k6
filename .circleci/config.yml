@@ -31,6 +31,7 @@ jobs:
       - checkout
       - run:
           name: Run tests and code coverage
+          no_output_timeout: 800s
           command: |
             go version
             export GOMAXPROCS=2
@@ -59,6 +60,7 @@ jobs:
       - checkout
       - run:
           name: Run tests with previous Go version
+          no_output_timeout: 800s
           command: |
             go version
             export GOMAXPROCS=2
